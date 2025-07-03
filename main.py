@@ -52,8 +52,22 @@ def main():
     parser.add_argument("target_path", help="レビュー対象のソースコードのパス")
     args = parser.parse_args()
 
+    # 出力ディレクトリを作成
+    output_dir = "reviews"
+    os.makedirs(output_dir, exist_ok=True)
+
     code = get_review_target_code(args.target_path)
     review_result = review_code(code)
+
+    # レビュー結果をファイルに保存
+    output_filename = os.path.basename(args.target_path) + ".md"
+    output_path = os.path.join(output_dir, output_filename)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(f"# Review for {os.path.basename(args.target_path)}\n\n")
+        f.write(review_result)
+
+    print(f"Review result saved to: {output_path}")
+    print("\n--- Review Result ---")
     print(review_result)
 
 if __name__ == "__main__":
