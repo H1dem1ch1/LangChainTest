@@ -1,74 +1,47 @@
-import os
 import argparse
-from dotenv import load_dotenv
-from langchain_openai import AzureChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 
-def get_review_target_code(target_path: str) -> str:
-    """
-    レビュー対象のソースコードをファイルから読み込む
-    """
-    with open(target_path, 'r', encoding='utf-8') as f:
-        return f.read()
+from src.github_service import get_pull_request
+from src.llm_service import review_code
 
-def create_prompt() -> PromptTemplate:
+def perform_review(repo_name: str, pr_number: int):
     """
-    レビューを依頼するためのプロンプトを作成する
+    指定されたプルリクエストに対してコードレビューを実行し、コメントを投稿する
     """
-    template = """
-あなたはプロのソフトウェアエンジニアです。
-以下のソースコードをレビューして、改善点を指摘してください。
+    pr = get_pull_request(repo_name, pr_number)
+    files = pr.get_files()
 
-観点：
-- セキュリティ
-- パフォーマンス
-- 可読性
-- バグの可能性
+    review_comments = []
+    for file in files:
+        if file.status == 'removed':
+            continue
+        
+        try:
+            content_file = pr.base.repo.get_contents(file.filename, ref=pr.head.sha)
+            code = content_file.decoded_content.decode('utf-8')
+            review_result = review_code(code)
+            comment = f"### `{file.filename}`\n\n{review_result}"
+            review_comments.append(comment)
+        except Exception as e:
+            comment = f"### `{file.filename}`\n\nレビュー中にエラーが発生しました: {e}"
+            review_comments.append(comment)
 
-ソースコード：
-{code}
-"""
-    return PromptTemplate(template=template, input_variables=["code"])
-
-def review_code(code: str) -> str:
-    """
-    LangChainのAzureChatOpenAIを使用して、ソースコードレビューを実行する
-    """
-    load_dotenv()
-    llm = AzureChatOpenAI(
-        openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-        azure_deployment=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-    )
-    prompt = create_prompt()
-    chain = LLMChain(llm=llm, prompt=prompt)
-    return chain.run(code=code)
+    if review_comments:
+        final_comment = "# AI Code Review\n\n" + "\n\n---\n\n".join(review_comments)
+        pr.create_issue_comment(final_comment)
+        print("Successfully posted a review comment to the pull request.")
+    else:
+        print("No files to review.")
 
 def main():
     """
-    メイン処理
+    メイン処理 (CLIからの実行用)
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("target_path", help="レビュー対象のソースコードのパス")
+    parser.add_argument("repo_name", help="リポジトリ名 (e.g., 'owner/repo')")
+    parser.add_argument("pr_number", type=int, help="プルリクエスト番号")
     args = parser.parse_args()
 
-    # 出力ディレクトリを作成
-    output_dir = "reviews"
-    os.makedirs(output_dir, exist_ok=True)
-
-    code = get_review_target_code(args.target_path)
-    review_result = review_code(code)
-
-    # レビュー結果をファイルに保存
-    output_filename = os.path.basename(args.target_path) + ".md"
-    output_path = os.path.join(output_dir, output_filename)
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(f"# Review for {os.path.basename(args.target_path)}\n\n")
-        f.write(review_result)
-
-    print(f"Review result saved to: {output_path}")
-    print("\n--- Review Result ---")
-    print(review_result)
+    perform_review(args.repo_name, args.pr_number)
 
 if __name__ == "__main__":
     main()
